@@ -174,6 +174,15 @@ def main():
     if args.override:
         config = OmegaConf.merge(config, OmegaConf.from_dotlist(list(args.override)))
 
+    # gram_teacher is the probe's ANCHOR -- the frozen pretrained backbone every arm is measured
+    # against -- not one of the arm's settings. Arms B and A' train with model.gram.enable=false,
+    # and honouring that here would delete the very thing the measurement compares to
+    # (`AttributeError: 'DinoV3PlModel' object has no attribute 'gram_teacher'`). So the anchor
+    # is forced on regardless of the arm, while everything else the overrides say is respected.
+    # This is also why arms B-E probed correctly before overrides existed: the spec's gram
+    # setting was always in force, so the anchor was always built.
+    config.model.gram.enable = True
+
     # fp32: the identity case sits at ~1e-07 and fp16 has ~1e-03 resolution there, so a
     # fp16 probe cannot tell "no drift" from "some drift". The xformers custom-attention path
     # hard-casts q/k/v to .half() and is therefore incompatible with fp32 -- disable it for
