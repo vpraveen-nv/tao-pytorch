@@ -189,7 +189,8 @@ srun --partition="$PARTITION" --account=edgeai_tao-ptm_image-foundation-model-cl
         /usr/bin/python scripts/slurm/dinov3_lora_drift_probe.py \\
             --spec '$SPEC_DIR/$SPEC_NAME' --checkpoint '$CKPT' \\
             --images-dir '$DATA_DIR' --output '$RESULT_DIR/probe.json' \\
-            --num-images 32 --arm smoke
+            --num-images 32 --arm '$ARM' \\
+            --override ${TRAIN_OVERRIDES}
     " 2>&1 | tee "$RESULT_DIR/smoke_probe.log"
 PROBE_RC=${PIPESTATUS[0]}
 echo "probe exit=$PROBE_RC"

@@ -259,7 +259,8 @@ srun --ntasks=1 --ntasks-per-node=1 --gpus-per-node=1 \
             --images-dir '${DATA_DIR}' \\
             --output '${RESULT_DIR}/probe.json' \\
             --num-images '${PROBE_NUM_IMAGES}' \\
-            --arm '${ARM}'
+            --arm '${ARM}' \\
+            --override ${TRAIN_OVERRIDES}
     "
 probe_status=$?
 set -e

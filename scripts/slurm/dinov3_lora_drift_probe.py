@@ -76,6 +76,11 @@ def parse_args():
     parser.add_argument("--pretrained", default=None,
                         help=("Pretrained snapshot that defines the anchor. Defaults to the "
                               "spec's train.pretrained_model_path."))
+    parser.add_argument("--override", nargs="*", default=None, metavar="KEY=VALUE",
+                        help="Hydra-style dotlist overrides applied to the spec, so the probe "
+                             "sees the SAME model configuration the arm trained with. Without "
+                             "this the probe reads the spec's defaults -- which enable LoRA -- "
+                             "and would inject adapters into a full-FT checkpoint.")
     parser.add_argument("--fp32", action="store_true", default=True,
                         help=("Run the probe in fp32 (default). Drift is measured at 1e-7 "
                               "scale at identity, which fp16 cannot resolve."))
@@ -160,6 +165,14 @@ def main():
     args = parse_args()
 
     config = load_spec(args.spec)
+
+    # The arm is expressed as command-line overrides at training time, not in the spec, so the
+    # probe has to be told the same thing or it silently probes a different model than the one
+    # that trained. Concretely, arm A' (full fine-tuning) trains with model.lora.enable=false
+    # while the spec says true: without this the probe injects 24 LoRA modules into a
+    # checkpoint that has none, and reports "72 missing keys" as a mere warning.
+    if args.override:
+        config = OmegaConf.merge(config, OmegaConf.from_dotlist(list(args.override)))
 
     # fp32: the identity case sits at ~1e-07 and fp16 has ~1e-03 resolution there, so a
     # fp16 probe cannot tell "no drift" from "some drift". The xformers custom-attention path
@@ -291,8 +304,20 @@ def main():
     print(f"Wrote {args.output}")
     if lora_keys:
         print(f"lora_* keys present in checkpoint: {len(lora_keys)}")
-    if missing or unexpected:
-        print(f"WARNING: {len(missing)} missing / {len(unexpected)} unexpected keys on load")
+    # A partial load here does not raise; it silently produces a probe of a model that is part
+    # trained-arm and part something else. That is the failure mode that cost this campaign a
+    # full round of arms (STATUS.md finding 1), so it is checked rather than warned about.
+    base_missing = [k for k in missing if "lora_" not in k]
+    if base_missing or unexpected:
+        raise RuntimeError(
+            f"checkpoint does not match the probed model: {len(base_missing)} base tensors "
+            f"missing, {len(unexpected)} unexpected. First few missing: {sorted(base_missing)[:8]}; "
+            f"unexpected: {sorted(unexpected)[:8]}. If this is a full-FT arm, pass "
+            f"--override model.lora.enable=false."
+        )
+    if missing:
+        print(f"NOTE: {len(missing)} adapter tensors absent from the checkpoint "
+              f"(expected when the arm trained without LoRA)")
 
 
 if __name__ == "__main__":
