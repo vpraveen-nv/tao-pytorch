@@ -69,6 +69,11 @@ def parse_args():
                              "identical. Off by default: every arm has a different backbone, "
                              "so a shared cache would silently serve one arm's features "
                              "for another.")
+    parser.add_argument("--override", nargs="*", default=None, metavar="KEY=VALUE",
+                        help="Hydra-style dotlist overrides applied to the spec, so this reads "
+                             "the SAME model configuration the arm trained with. Without it the "
+                             "spec's defaults win -- which enable LoRA -- and a full-FT "
+                             "checkpoint would be loaded into a LoRA-injected model.")
     parser.add_argument("--source", default="teacher", choices=["teacher", "student"])
     parser.add_argument("--no-faiss", action="store_true",
                         help="Force the brute-force top-K path. The library's own docstring "
@@ -94,6 +99,12 @@ def build_model(args, config, device):
     # 6459926, but this keeps the script correct on other hardware.)
     config.train.use_custom_attention = False
 
+    # Same lesson as the drift probe: the arm lives in command-line overrides, not in the spec,
+    # so without this a full-FT checkpoint is loaded into a LoRA-injected model and the mismatch
+    # is reported as a warning rather than an error.
+    if getattr(args, "override", None):
+        config = OmegaConf.merge(config, OmegaConf.from_dotlist(list(args.override)))
+
     model = DinoV3PlModel(config).to(device)
     model.pretrained_weights = config.train.pretrained_model_path
     model.restore_pretrained_weights()
@@ -110,6 +121,17 @@ def build_model(args, config, device):
         state = extract_backbone_state_dict(raw, source=args.source)
         backbone = getattr(model, args.source).backbone
         missing, unexpected = backbone.load_state_dict(state, strict=False)
+        # A partial load here silently measures a model that is part arm and part something
+        # else. Adapter keys absent from a non-LoRA arm are legitimate; base tensors missing
+        # never are.
+        base_missing = [k for k in missing if "lora_" not in k]
+        if base_missing or unexpected:
+            raise RuntimeError(
+                f"checkpoint does not match the model: {len(base_missing)} base tensors missing, "
+                f"{len(unexpected)} unexpected. First few: {sorted(base_missing)[:8]} / "
+                f"{sorted(unexpected)[:8]}. For a full-FT arm pass "
+                f"--override model.lora.enable=false."
+            )
         loaded = {
             "checkpoint": os.path.abspath(args.checkpoint),
             "missing": len(missing), "unexpected": len(unexpected),
