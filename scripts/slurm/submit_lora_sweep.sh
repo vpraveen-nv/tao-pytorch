@@ -117,4 +117,7 @@ if [[ "${DRY_RUN}" == "1" ]]; then
 fi
 
 echo "=== submitting ==="
-sbatch --job-name="dinov3_sweep_${RUN_ID}_${JIRA}" scripts/slurm/dinov3_lora_vitb.sbatch
+# Run ids already carry the `sweep_` prefix, so the job name is dinov3_sweep_w0_seedC_TAO-2526
+# rather than a doubled dinov3_sweep_sweep_w0_seedC. The `dinov3_sweep_` stem is what the
+# concurrency guard above and the driver's queue poll both match on.
+sbatch --job-name="dinov3_${RUN_ID}_${JIRA}" scripts/slurm/dinov3_lora_vitb.sbatch
