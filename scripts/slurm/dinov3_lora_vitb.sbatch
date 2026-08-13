@@ -30,7 +30,12 @@
 
 set -euo pipefail
 
-ARM="${ARM:?Set ARM to one of A, B, C, D, E.}"
+ARM="${ARM:?Set ARM to one of A, B, C, D, E, or SWEEP.}"
+# The label this run is known by on disk, in the job name and in probe.json. For the Stage-4
+# arms it is the arm letter and nothing changes. The hyperparameter sweep (TAO-2526) runs
+# configurations that are not arms -- `sweep_w1_lr1e-4` and the like -- so the identity that
+# names the run is separated from the ARM switch that selects the loss-weight preset.
+RUN_ID="${RUN_ID:-${ARM}}"
 
 REPO_DIR="${REPO_DIR:-${SLURM_SUBMIT_DIR:-$PWD}}"
 TAO_CORE_DIR="${TAO_CORE_DIR:-${REPO_DIR}/tao-core}"
@@ -46,7 +51,7 @@ GPUS_PER_NODE="${GPUS_PER_NODE:-8}"
 WANDB_ENABLE="${WANDB_ENABLE:-0}"
 WANDB_PROJECT="${WANDB_PROJECT:-DINOv3 LoRA}"
 WANDB_ENTITY="${WANDB_ENTITY:-metropolis}"
-WANDB_NAME="${WANDB_NAME:-dinov3_lora_arm_${ARM}}"
+WANDB_NAME="${WANDB_NAME:-dinov3_lora_arm_${RUN_ID}}"
 DRY_RUN="${DRY_RUN:-0}"
 RUN_PROBE="${RUN_PROBE:-1}"
 PROBE_NUM_IMAGES="${PROBE_NUM_IMAGES:-64}"
@@ -65,7 +70,11 @@ case "${ARM}" in
     C)  ARM_OVERRIDES="model.lora.enable=true model.gram.enable=true model.gram.w_gram=1.0 model.preservation.enable=false" ;;
     D)  ARM_OVERRIDES="" ;;
     E)  ARM_OVERRIDES="model.lora.enable=true model.gram.enable=true model.gram.w_gram=2.0 model.preservation.enable=true model.preservation.cls_mse_weight=0.10 model.preservation.cls_cosine_weight=0.10" ;;
-    *)  echo "Unknown ARM '${ARM}'. Expected one of: A B C D E." >&2; exit 2 ;;
+    # The sweep supplies its whole configuration through TRAIN_OVERRIDES, built from the run
+    # registry (cluster_scripts/arms.py) by submit_lora_sweep.sh. No preset is applied here, so
+    # a sweep run's configuration has exactly one definition and it is not this file.
+    SWEEP)  ARM_OVERRIDES="" ;;
+    *)  echo "Unknown ARM '${ARM}'. Expected one of: A B C D E SWEEP." >&2; exit 2 ;;
 esac
 
 # Caller-supplied overrides win, so they come last on the command line.
@@ -140,6 +149,7 @@ if [[ -n "${latest_ckpt}" ]]; then
 fi
 
 echo "Job        : ${SLURM_JOB_ID:-not-submitted}"
+echo "Run        : ${RUN_ID}"
 echo "Arm        : ${ARM}"
 echo "Repository : ${REPO_DIR}"
 echo "Spec       : ${SPEC_DIR}/${SPEC_NAME}"
@@ -259,7 +269,7 @@ srun --ntasks=1 --ntasks-per-node=1 --gpus-per-node=1 \
             --images-dir '${DATA_DIR}' \\
             --output '${RESULT_DIR}/probe.json' \\
             --num-images '${PROBE_NUM_IMAGES}' \\
-            --arm '${ARM}' \\
+            --arm '${RUN_ID}' \\
             --override ${TRAIN_OVERRIDES}
     "
 probe_status=$?
