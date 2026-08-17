@@ -28,19 +28,39 @@ model:
     teacher_type: vit_b
     student_type: vit_b
     img_size: 512
-    # Lowered 0.4 -> 0.1. Two reasons, both from the devbox Stage-2 findings (STATUS finding 2):
-    #  1. Stochastic depth is a regularizer sized for full fine-tuning of 86M parameters. Under
-    #     LoRA only ~0.44M adapter parameters (plus heads and mask_token) are trainable and the
-    #     base is frozen, so the drift subspace is already rank-bounded -- 0.4 drop-path is
-    #     redundant capacity control that mostly just adds gradient noise.
-    #  2. It destroys the preservation signal. Measured at init, where LoRA is provably an
-    #     identity (B=0): with drop_path 0.0 in eval mode the student matches the anchor to
-    #     1.2e-07 cls_cos, but with drop_path 0.4 in train mode cls_cos reads 9.3e-01 -- i.e.
-    #     the in-training preservation scalars are dominated by stochastic-depth noise rather
-    #     than by real representational drift. Lowering it does not by itself make the
-    #     in-training scalars a drift metric (that is why the post-train eval-mode unmasked
-    #     probe exists), but it stops them being pure noise.
-    drop_path_rate: 0.1
+    # OFF for LoRA continual pre-training. This is not the same call as for a from-scratch run:
+    # train_dinov3_vitb/_vitl/_highres and nvdinov2 keep 0.4 and should, because the reasoning
+    # below needs a preservation anchor and does not transfer to training without one.
+    #
+    # Measured (TAO-2528, diagnostics D6 + D5) on the arm-C recipe with only this value moved.
+    # Seed counts differ per rung; the 0.00 and 0.10 rows are means over 2 and 4 seeds.
+    #
+    #     drop_path   n   ImageNet retention   gain@224   Wistron@224
+    #       0.00      2        -0.60             +1.58       97.05
+    #       0.10      4        -4.64             +1.88       96.92
+    #       0.20      1        -9.89             +0.52       96.74
+    #
+    # Run-to-run spread at n = 4 (sd): retention 0.22, gain 0.13, Wistron 0.16, Innodisk 0.31.
+    # Retention improves by 4.04 points = 18.4 sd. Both dp = 0 seeds clear the campaign's
+    # <=1.0 pt retention rule; no dp > 0 run has ever come within 3.4 of it.
+    #
+    # The gain difference is a real caveat rather than a footnote: -0.30 balanced, which at n = 2
+    # is 1.2 sd and NOT resolved. It sits entirely on Innodisk (305 images, the noisiest readout
+    # in the suite); on Wistron the two settings are indistinguishable (+0.13, 0.8 sd). Read this
+    # as ~4 points of retention against at most ~0.3 of gain -- a favourable trade, not free.
+    #
+    # Why, mechanically: stochastic depth makes the student a different random sub-network on
+    # every step while the Gram and CLS terms anchor a *full-depth* frozen teacher. The optimizer
+    # therefore pulls an ensemble average toward the anchor and leaves the full-depth network --
+    # the one inference loads -- unconstrained. This is also why it went unnoticed for two
+    # campaigns: the post-train drift probe runs in eval mode, where stochastic depth is off, so
+    # it cannot see the channel at all.
+    #
+    # Superseded reasoning, kept because it is still true and still why 0.4 was wrong: stochastic
+    # depth is capacity control sized for full fine-tuning of 86M parameters, where under LoRA
+    # only ~0.44M adapter params are trainable with the base frozen; and at dp 0.4 in train mode
+    # cls_cos reads 9.3e-01 where the model is provably an identity (1.2e-07 at dp 0.0, eval).
+    drop_path_rate: 0.0
 
   # --- arm-D: LoRA on ---------------------------------------------------------------------
   lora:
